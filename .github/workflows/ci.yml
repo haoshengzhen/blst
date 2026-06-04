@@ -217,6 +217,9 @@ jobs:
             fi
             env PATH=~/swig/bin:$PATH SWIG_LIB=~/swig/share/swig/current \
                 $node_js/run.me
+            (cd $node_js; npm install node-addon-api && rm blst_wrap.cpp)
+            env PATH=~/swig/bin:$PATH SWIG_LIB=~/swig/share/swig/current \
+                $node_js/run.me
         fi
     - name: node-gyp
       run: |

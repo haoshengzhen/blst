@@ -28,15 +28,23 @@ if [ ! -f blst_wrap.cpp -o ../blst.swg -nt blst_wrap.cpp \
                         -o ../blst.hpp -nt blst_wrap.cpp \
                         -o ../blst.h   -nt blst_wrap.cpp ]; then
     #swig -version | awk -F'[. ]' '/Version/ {print $3}'
-    (set -x; swig -c++ -javascript -node -DV8_VERSION=0x060000 \
-                  -outdir . -o blst_wrap.cpp ../blst.swg)
+    if [ -f node_modules/node-addon-api/napi.h ]; then
+        INCS="$INCS -Inode_modules/node-addon-api"
+        (set -x; swig -c++ -javascript -napi \
+                      -outdir . -o blst_wrap.cpp ../blst.swg)
+    else
+        (set -x; swig -c++ -javascript -node -DV8_VERSION=0x060000 \
+                      -outdir . -o blst_wrap.cpp ../blst.swg)
+    fi
 fi
 
 if [ ! -f blst.node -o blst_wrap.cpp -nt blst.node \
                     -o ../libblst.a  -nt blst.node ]; then
     # figure out minimally required C++ standard and enforce it...
     nodever=`$NODE -e 'console.log(parseInt(process.versions["node"]))'`
-    if [ $nodever -gt 18 ]; then
+    if [ $nodever -gt 22 ]; then
+        min=20
+    elif [ $nodever -gt 18 ]; then
         min=17
     elif [ $nodever -gt 14 ]; then
         min=14

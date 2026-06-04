@@ -618,6 +618,9 @@ import java.nio.file.*;
 #else
 # define GetData() GetContents().Data()
 #endif
+#if V8_MAJOR_VERSION >= 13
+# define Holder() This()
+#endif
 %}
 
 %typemap(throws) BLST_ERROR %{ SWIG_V8_Raise(BLST_ERROR_str[$1]); SWIG_fail; %}
@@ -737,6 +740,124 @@ import java.nio.file.*;
 // return |this|
 %typemap(out) SELF* OUTPUT %{ (void)$1; $result = args.Holder(); %}
 
+#elif defined(SWIGJAVASCRIPT) && defined(SWIG_JAVASCRIPT_NAPI)
+
+%typemap(throws) BLST_ERROR %{ SWIG_NAPI_Raise(info.Env(), BLST_ERROR_str[$1]); SWIG_fail; %}
+
+%typemap(in) const byte* %{
+    if ($input.IsBuffer()) {
+        auto buf = $input.As<Napi::Buffer<uint8_t>>();
+        $1 = ($1_ltype)buf.Data();
+    } else if ($input.IsNull()) {
+        $1 = nullptr;
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                            "expecting <Buffer>");
+    }
+%}
+%typemap(argout)  const byte* ""
+%typemap(freearg) const byte* ""
+
+%apply const byte* { const byte[ANY] }
+%typemap(in) const byte[ANY] %{
+    if ($input.IsBuffer()) {
+        auto buf = $input.As<Napi::Buffer<uint8_t>>();
+        if (buf.Length() != $1_dim0)
+            SWIG_exception_fail(SWIG_IndexError, "in method '$symname', "
+                                                 "expecting $1_dim0 bytes");
+        $1 = ($1_ltype)buf.Data();
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                            "expecting <Buffer>");
+    }
+%}
+
+// let users use JavaScript <BigInt> and <Buffer> as scalars
+%typemap(in) (const byte* scalar, size_t nbits) %{
+    if ($input.IsBuffer()) {
+        auto buf = $input.As<Napi::Buffer<uint8_t>>();
+        $1 = ($1_ltype)buf.Data();
+        $2 = 8*buf.Length();
+    } else if ($input.IsBigInt()) {
+        auto bi = $input.As<Napi::BigInt>();
+        int sign;
+        size_t word_count;
+
+        bi.ToWords(&sign, &word_count, nullptr);
+
+        uint64_t* words = (uint64_t*)alloca($2 = word_count*sizeof(uint64_t));
+
+        bi.ToWords(&sign, &word_count, words);
+        if (sign)
+            SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                                "expecting unsigned value");
+        $1 = ($1_ltype)words;
+        $2 *= 8;
+
+        const union {
+            long one;
+            char little;
+        } is_endian = { 1 };
+
+        if (!is_endian.little) {
+            byte* p = $1;
+            for (size_t i = 0; i < word_count; i++) {
+                uint64_t val = words[i];
+                for (size_t j = 0; j < sizeof(val); j++, val >>= 8)
+                    *p++ = (byte)val;
+            }
+        }
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                            "expecting <Buffer> or <BigInt>");
+    }
+%}
+
+%typemap(in) (const byte *STRING, size_t LENGTH) %{
+    if ($input.IsBuffer()) {
+        auto buf = $input.As<Napi::Buffer<uint8_t>>();
+        $1 = ($1_ltype)buf.Data();
+        $2 = buf.Length();
+    } else if ($input.IsString()) {
+        auto str = $input.As<Napi::String>();
+        auto utf8 = str.Utf8Value();
+        $2 = utf8.length();
+        $1 = ($1_ltype)alloca($2);
+        memcpy($1, utf8.data(), $2);
+    } else if ($input.IsNull()) {
+        $1 = nullptr;
+        $2 = 0;
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                            "expecting <Buffer> or <String>");
+    }
+%}
+%typemap(freearg) (const byte *STRING, size_t LENGTH) ""
+
+%typemap(in) blst::bytes_t %{
+    if ($input.IsBuffer()) {
+        auto buf = $input.As<Napi::Buffer<uint8_t>>();
+        $1.ptr = (byte*)buf.Data();
+        $1.len = buf.ByteLength();
+    } else if ($input.IsString()) {
+        auto str = $input.As<Napi::String>();
+        auto utf8 = str.Utf8Value();
+        $1.len = utf8.length();
+        $1.ptr = (byte*)alloca($1.len);
+        memcpy((byte*)$1.ptr, utf8.data(), $1.len);
+    } else if ($input.IsNull()) {
+        $1.ptr = nullptr;
+        $1.len = 0;
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "in method '$symname', "
+                                            "expecting <Buffer> or <String>");
+    }
+%}
+%typemap(freearg) blst::bytes_t ""
+
+// return |this|
+%typemap(out) SELF* OUTPUT %{ (void)$1; $result = info.This(); %}
+
 #elif defined(SWIGPERL)
 
 // let users use byte[] as scalars
@@ -776,6 +897,10 @@ import java.nio.file.*;
     auto ab = v8::ArrayBuffer::New(v8::Isolate::GetCurrent(), $1_dim0);
     memcpy(ab->GetData(), $1, $1_dim0);
     $result = v8::Uint8Array::New(ab, 0, $1_dim0);
+#elif defined(SWIGJAVASCRIPT) && defined(SWIG_JAVASCRIPT_NAPI)
+    auto ab = Napi::ArrayBuffer::New(env, $1_dim0);
+    memcpy(ab.Data(), $1, $1_dim0);
+    $result = Napi::Uint8Array::New(env, $1_dim0, ab, 0);
 #elif defined(SWIGPERL)
     $result = SWIG_FromCharPtrAndSize((char *)$1, $1_dim0); argvi++;
 #else // TODO: figure out more language-specific ways to return multi-values...
